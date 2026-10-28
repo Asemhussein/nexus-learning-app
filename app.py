@@ -691,7 +691,10 @@ Return ONLY valid JSON mapping exact topic titles to a comma-separated string of
                             seen_edges.add(key)
                             edges.append(Edge(source=t['title'], target=tgt, color="#38bdf8", width=2))
             try:
-                agraph(nodes=nodes, edges=edges, config=Config(width=900, height=540, directed=False, physics=physics_enabled))
+                clicked_node = agraph(nodes=nodes, edges=edges,
+                                      config=Config(width=900, height=540, directed=False, physics=physics_enabled))
+                if clicked_node:
+                    st.session_state.graph_clicked = clicked_node
             except Exception as e:
                 st.warning(f"Interactive graph failed ({str(e)[:120]}). Showing a static graph instead.")
                 st.graphviz_chart(build_dot(show_categories))
@@ -700,6 +703,44 @@ Return ONLY valid JSON mapping exact topic titles to a comma-separated string of
                         '<p>Create a few topics first, then use AI Auto-Connect.</p></div>', unsafe_allow_html=True)
         else:
             st.graphviz_chart(build_dot(show_categories))
+
+    # ---- Topic details panel (works even if clicking a node does nothing) ----
+    st.divider()
+    st.markdown("### 📝 Topic Details")
+    if not st.session_state.topics:
+        st.caption("No topics yet.")
+    else:
+        names_g = [t['title'] for t in st.session_state.topics]
+        clicked = st.session_state.get("graph_clicked")
+        if clicked and str(clicked).startswith("HUB_"):
+            cat_name = str(clicked)[4:]
+            in_cat_list = [t for t in st.session_state.topics if (t.get('category') or 'General') == cat_name]
+            st.markdown(f"**📂 {cat_name}** ({len(in_cat_list)} topics)")
+            st.dataframe(pd.DataFrame(in_cat_list)[['title', 'status', 'mastery']], hide_index=True)
+            clicked = None
+        start_idx = names_g.index(clicked) if clicked in names_g else 0
+        sel_g = st.selectbox("Open topic (click a node in the graph or pick here):", names_g, index=start_idx)
+        tg = next(t for t in st.session_state.topics if t['title'] == sel_g)
+
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Status", tg.get('status') or "-")
+        d2.metric("Mastery", f"{int(tg.get('mastery') or 0)}%")
+        d3.metric("Updated", tg.get('updated_at') or "-")
+        if tg.get('related_topics'):
+            st.markdown(f"**🔗 Linked to:** {tg['related_topics']}")
+
+        st.markdown("**✍️ Notes**")
+        g_notes = st.text_area("Notes", value=tg.get('notes') or '', height=200,
+                               key=f"graph_notes_{sel_g}", label_visibility="collapsed")
+        if st.button("💾 Save notes", key=f"graph_save_{sel_g}"):
+            _, err = upsert_topic(sel_g, tg.get('category'), tg.get('status'), tg.get('mastery'), notes=g_notes)
+            if err:
+                st.error(err)
+            else:
+                st.success("Notes saved to cloud ✅")
+        if tg.get('ai_summary'):
+            with st.expander("🤖 AI Summary", expanded=False):
+                st.markdown(tg['ai_summary'])
 
 # ================= TAB 3: KNOWLEDGE VAULT =================
 with tab3:
