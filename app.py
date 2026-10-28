@@ -202,30 +202,30 @@ def explain_db_error(e):
     s = str(e)
     low = s.lower()
     if "row-level security" in low or "42501" in low:
-        hint = "RLS شغال على الجدول ومفيش Policy بتسمح بالكتابة. شغّل SQL الـ policies من التعليمات."
+        hint = "Row Level Security is on but no policy allows writes. Run the policies SQL from the Cloud Diagnostics tab."
     elif "42p10" in low or "no unique or exclusion constraint" in low:
-        hint = "عمود title/term مش UNIQUE في الجدول، عشان كده الـ upsert بيفشل. شغّل SQL الإنشاء."
+        hint = "The title/term column has no UNIQUE constraint, so upsert fails. Run the unique-index SQL from the Cloud Diagnostics tab."
     elif "pgrst205" in low or "could not find the table" in low or "42p01" in low:
-        hint = "الجدول مش موجود في Supabase. شغّل SQL الإنشاء في SQL Editor."
+        hint = "The table does not exist in Supabase. Run the setup SQL in the SQL Editor."
     elif "pgrst204" in low or ("column" in low and "does not exist" in low):
-        hint = "ناقص عمود في الجدول (غالباً related_topics). شغّل ALTER TABLE من التعليمات."
+        hint = "A column is missing (probably related_topics). Run the ALTER TABLE statements from the Cloud Diagnostics tab."
     elif "invalid api key" in low or "jwt" in low or "apikey" in low:
-        hint = "الـ SUPABASE_KEY غلط. استخدم anon/publishable key أو service_role من Project Settings > API."
+        hint = "SUPABASE_KEY is invalid. Use the anon/publishable or service_role key from Project Settings > API."
     elif "name or service not known" in low or "connection" in low or "timed out" in low:
-        hint = "مش قادر يوصل لـ Supabase. راجع SUPABASE_URL (أو المشروع Paused؟)."
+        hint = "Cannot reach Supabase. Check SUPABASE_URL (or whether the project is paused)."
     else:
-        hint = "خطأ غير متوقع."
-    return f"{hint}\n\nالتفاصيل: {s[:300]}"
+        hint = "Unexpected error."
+    return f"{hint}\n\nDetails: {s[:300]}"
 
 
 def run_db_check():
     """Real read + write probe. Returns (ok, message)."""
     if not SUPABASE_INSTALLED:
-        return False, "مكتبة supabase مش متسطبة (راجع requirements.txt)."
+        return False, "The supabase package is not installed (check requirements.txt)."
     if _client_err:
         return False, explain_db_error(_client_err)
     if not supabase_client:
-        return False, "مفيش Secrets لـ SUPABASE_URL / SUPABASE_KEY → الداتا محلية بس وهتتمسح مع كل Refresh."
+        return False, "SUPABASE_URL / SUPABASE_KEY secrets are missing: data is local only and is lost on every refresh."
     today = datetime.now().strftime("%Y-%m-%d")
     try:
         supabase_client.table("topics").select("title").limit(1).execute()
@@ -271,7 +271,7 @@ if 'data_initialized' not in st.session_state:
 def _cloud_write(table, item, conflict_col):
     """Upsert to Supabase. Returns '' on success or an error message. Never hides failures."""
     if not supabase_client:
-        return "Local mode: الداتا مش متسيفة في السحابة."
+        return "Local mode: data is not saved to the cloud."
     try:
         supabase_client.table(table).upsert(item, on_conflict=conflict_col).execute()
         st.session_state.db_verified = True
@@ -476,9 +476,9 @@ st.markdown("""
 
 # Honest persistence banners (the old version hid these errors)
 if st.session_state.get("last_save_error"):
-    st.error("⚠️ آخر عملية حفظ **ماوصلتش** للسحابة:\n\n" + st.session_state.last_save_error)
+    st.error("⚠️ The last save did **NOT** reach the cloud:\n\n" + st.session_state.last_save_error)
 elif not st.session_state.get("db_verified"):
-    st.warning("⚠️ الداتا حالياً **محلية بس** وهتتمسح مع أي Refresh. افتح تاب Cloud Diagnostics لتشوف السبب.")
+    st.warning("⚠️ Data is currently **local only** and will be lost on refresh. Open the Cloud Diagnostics tab to see why.")
 
 topic_list = [t['title'] for t in st.session_state.topics]
 
@@ -649,7 +649,7 @@ with tab3:
                                     for page in reader.pages[:8]:
                                         extracted_text += (page.extract_text() or "") + "\n"
                                     if not extracted_text.strip():
-                                        st.warning("الـ PDF ده شكله صور (Scanned) ومفيش نص يتقرا. جرب ترفعه كصورة.")
+                                        st.warning("This PDF looks scanned (no extractable text). Try uploading it as an image.")
                                 except Exception as e:
                                     st.error(f"PDF read error: {e}")
                             else:
@@ -800,9 +800,9 @@ with tab6:
              f"**Topics in memory:** `{len(st.session_state.topics)}`")
 
     if st.session_state.get("db_verified"):
-        st.success("✅ قراءة وكتابة Supabase شغالين تمام.")
+        st.success("✅ Supabase read and write both work.")
     else:
-        st.error("❌ الحفظ في السحابة مش شغال. السبب:")
+        st.error("❌ Cloud saving is not working. Reason:")
         st.code(st.session_state.get("db_error_msg") or "Unknown")
 
     if st.button("🔄 Run full read/write test & reload from cloud", type="primary"):
@@ -830,7 +830,22 @@ create table if not exists glossary (
   category text, context text
 );
 
--- if the tables already existed, make sure of these:
+-- FIX for error 42P10: tables already exist without UNIQUE constraints.
+-- 1) remove duplicate rows (keeps one per title / term)
+delete from topics a using topics b where a.ctid < b.ctid and a.title = b.title;
+delete from glossary a using glossary b where a.ctid < b.ctid and a.term = b.term;
+-- 2) add the unique indexes that ON CONFLICT needs
+create unique index if not exists topics_title_uidx on topics (title);
+create unique index if not exists glossary_term_uidx on glossary (term);
+
+-- make sure all columns exist
+alter table topics add column if not exists category text;
+alter table topics add column if not exists status text;
+alter table topics add column if not exists mastery int default 50;
+alter table topics add column if not exists notes text default '';
+alter table topics add column if not exists updated_at text;
+alter table glossary add column if not exists category text;
+alter table glossary add column if not exists context text;
 alter table topics add column if not exists related_topics text default '';
 alter table topics add column if not exists ai_summary text default '';
 
