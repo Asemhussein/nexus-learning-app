@@ -353,7 +353,62 @@ def parse_json_loose(text):
     return json.loads(t[start:end + 1])
 
 
-def ask_gemini(prompt, image_file=None, selected_model="gemini-2.5-flash", json_mode=False):
+def normalize_links(data):
+    """Accept several JSON shapes from the model and return {topic: 'a, b, c'}."""
+    out = {}
+    def to_str(v):
+        return ", ".join(map(str, v)) if isinstance(v, list) else str(v or "")
+    if isinstance(data, dict):
+        for k, v in data.items():
+            out[str(k)] = to_str(v)
+    elif isinstance(data, list):
+        for row in data:
+            if isinstance(row, dict):
+                k = row.get("topic") or row.get("title") or row.get("source")
+                v = row.get("related") or row.get("related_topics") or row.get("targets") or row.get("target") or ""
+                if k:
+                    out[str(k)] = to_str(v)
+    return out
+
+
+def delete_glossary(term):
+    st.session_state.glossary = [g for g in st.session_state.glossary if g['term'] != term]
+    if supabase_client:
+        try:
+            supabase_client.table("glossary").delete().eq("term", term).execute()
+        except Exception as e:
+            st.session_state.last_save_error = explain_db_error(e)
+
+
+def build_dot(show_hubs=True):
+    """Static fallback graph (Graphviz) used when the interactive graph is unavailable."""
+    def esc(x):
+        return str(x).replace('"', "'")
+    topics = st.session_state.topics
+    lines = ["graph G {", 'bgcolor="transparent";',
+             'node [style=filled, fontcolor="white", fontname="Helvetica", color="#334155"];',
+             'edge [color="#64748b"];']
+    if show_hubs:
+        for c in set(t.get('category') or 'General' for t in topics):
+            lines.append(f'"HUB_{esc(c)}" [label="{esc(c)}", shape=hexagon, fillcolor="#1e3a8a"];')
+    seen = set()
+    for t in topics:
+        mast = int(t.get('mastery') or 50)
+        color = "#10b981" if (t.get('status') == "Completed" or mast >= 80) else ("#f59e0b" if mast >= 40 else "#ef4444")
+        lines.append(f'"{esc(t["title"])}" [label="{esc(t["title"])}\\n({mast}%)", fillcolor="{color}"];')
+        if show_hubs:
+            lines.append(f'"HUB_{esc(t.get("category") or "General")}" -- "{esc(t["title"])}";')
+    for t in topics:
+        for r in [x.strip() for x in str(t.get('related_topics') or '').split(',') if x.strip()]:
+            tgt = next((x['title'] for x in topics if x['title'].lower() == r.lower()), None)
+            if tgt and tgt != t['title'] and frozenset((t['title'], tgt)) not in seen:
+                seen.add(frozenset((t['title'], tgt)))
+                lines.append(f'"{esc(t["title"])}" -- "{esc(tgt)}" [color="#38bdf8", penwidth=2];')
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def ask_gemini(prompt, image_file=None, selected_model="gemini-3.8-flash", json_mode=False):
     if not ai_client:
         return False, "⚠️ AI Engine offline. Please verify GEMINI_API_KEY."
     contents = [prompt]
@@ -365,19 +420,20 @@ def ask_gemini(prompt, image_file=None, selected_model="gemini-2.5-flash", json_
 
     config = types.GenerateContentConfig(response_mime_type="application/json") if json_mode else None
     chain = []
-    for m in [selected_model, "gemini-2.5-flash", "gemini-2.0-flash"]:
+    for m in [selected_model, "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]:
         if m and m not in chain:
             chain.append(m)
 
-    last_err = "Empty response from model."
+    errors = []
     for m in chain:
         try:
             response = ai_client.models.generate_content(model=m, contents=contents, config=config)
             if response and response.text:
                 return True, response.text
+            errors.append(f"{m}: empty response")
         except Exception as e:
-            last_err = f"{m}: {e}"
-    return False, f"⚠️ AI Request Failed: {last_err[:220]}"
+            errors.append(f"{m}: {str(e)[:160]}")
+    return False, "⚠️ AI request failed on every model tried:\n\n" + "\n\n".join(errors)
 
 
 def build_advanced_pptx(topic, audience, slides_json):
@@ -415,8 +471,8 @@ with st.sidebar:
     c1.markdown(ai_badge, unsafe_allow_html=True)
     c2.markdown(db_badge, unsafe_allow_html=True)
 
-    preset = st.selectbox("⚡ AI Model:", ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"], index=0)
-    custom_model = st.text_input("Custom model (optional):", placeholder="e.g. gemini-3-flash")
+    preset = st.selectbox("⚡ AI Model:", ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"], index=0)
+    custom_model = st.text_input("Custom model (optional):", placeholder="override the model name here")
     model_choice = custom_model.strip() or preset
     st.divider()
 
@@ -482,9 +538,9 @@ elif not st.session_state.get("db_verified"):
 
 topic_list = [t['title'] for t in st.session_state.topics]
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab_ask, tab6 = st.tabs([
     "📊 1. Tracker", "🕸️ 2. Visual Map", "🧠 3. Knowledge Vault",
-    "🎯 4. Pitch Studio", "🎙️ 5. AI Coach & Cards", "⚙️ 6. Cloud Diagnostics"
+    "🎯 4. Pitch Studio", "🎙️ 5. AI Coach & Cards", "💬 6. Ask Your Brain", "⚙️ 7. Cloud Diagnostics"
 ])
 
 # ================= TAB 1: TRACKER =================
@@ -514,6 +570,22 @@ with tab1:
             st.markdown("##### 📂 Topics per Domain")
             st.bar_chart(df['category'].value_counts(), color="#1e3a8a")
 
+        st.markdown("### 🔁 Review Queue")
+        rq = df.copy()
+        rq['days_since'] = (pd.Timestamp(datetime.now().date()) - pd.to_datetime(rq['updated_at'], errors='coerce')).dt.days.fillna(0).astype(int)
+        rq['review_every_days'] = 1 + (rq['mastery'] // 20) * 3
+        due = rq[(rq['status'] != 'Not Started') & (rq['days_since'] >= rq['review_every_days'])]
+        due = due.sort_values(['mastery', 'days_since'], ascending=[True, False]).head(5)
+        if due.empty:
+            st.success("Nothing is due for review today 🎉")
+        else:
+            st.caption("Lower mastery means more frequent review. Take a quiz or update a topic to reset its timer.")
+            st.dataframe(due[['title', 'mastery', 'days_since', 'review_every_days']],
+                         column_config={"title": "Topic", "mastery": "Mastery %",
+                                        "days_since": "Days since update", "review_every_days": "Review every (days)"},
+                         hide_index=True)
+        st.divider()
+
         st.markdown("### 📌 Interactive Knowledge Directory")
         f1, f2 = st.columns([2, 1])
         with f1:
@@ -540,6 +612,11 @@ with tab1:
         st.download_button("⬇️ Export filtered topics (CSV)",
                            data=fdf[cols_to_show].to_csv(index=False).encode("utf-8-sig"),
                            file_name="nexus_topics.csv", mime="text/csv")
+        md_all = "\n\n---\n\n".join(
+            f"# {t['title']}\n*{t.get('category') or ''} | {t.get('status') or ''} | {t.get('mastery') or 0}%*\n\n"
+            f"{t.get('notes') or ''}\n\n{t.get('ai_summary') or ''}" for t in st.session_state.topics)
+        st.download_button("⬇️ Export all notes (Markdown)", data=md_all.encode("utf-8"),
+                           file_name="nexus_notes.md", mime="text/markdown")
     else:
         st.markdown('<div class="empty-state"><h3>Your knowledge base starts here</h3>'
                     '<p>Add a topic from the sidebar to start tracking progress, connecting ideas, and building your second brain.</p></div>',
@@ -563,16 +640,23 @@ Return ONLY valid JSON mapping exact topic titles to a comma-separated string of
 {{"Topic A": "Topic B, Topic C"}}"""
                     ok, res = ask_gemini(link_prompt, selected_model=model_choice, json_mode=True)
                     if ok:
+                        linked_ok = False
                         try:
-                            links_map = parse_json_loose(res)
+                            links_map = normalize_links(parse_json_loose(res))
+                            known = {t['title'].lower(): t['title'] for t in st.session_state.topics}
                             for t_title, rels in links_map.items():
                                 m = next((t for t in st.session_state.topics if t['title'].lower() == str(t_title).lower()), None)
                                 if m:
+                                    valid = [known[r.strip().lower()] for r in rels.split(",")
+                                             if r.strip().lower() in known and r.strip().lower() != m['title'].lower()]
                                     upsert_topic(m['title'], m.get('category'), m.get('status'), m.get('mastery'),
-                                                 related_topics=rels if isinstance(rels, str) else ", ".join(rels))
-                            st.rerun()
+                                                 related_topics=", ".join(valid))
+                            linked_ok = True
                         except Exception as e:
-                            st.warning(f"Parse error: {e}")
+                            st.warning(f"Could not read the AI reply: {e}")
+                            st.code(res[:500])
+                        if linked_ok:
+                            st.rerun()
                     else:
                         st.error(res)
             else:
@@ -606,12 +690,16 @@ Return ONLY valid JSON mapping exact topic titles to a comma-separated string of
                         if key not in seen_edges:
                             seen_edges.add(key)
                             edges.append(Edge(source=t['title'], target=tgt, color="#38bdf8", width=2))
-            agraph(nodes=nodes, edges=edges, config=Config(width=900, height=540, directed=False, physics=physics_enabled))
+            try:
+                agraph(nodes=nodes, edges=edges, config=Config(width=900, height=540, directed=False, physics=physics_enabled))
+            except Exception as e:
+                st.warning(f"Interactive graph failed ({str(e)[:120]}). Showing a static graph instead.")
+                st.graphviz_chart(build_dot(show_categories))
         elif not st.session_state.topics:
             st.markdown('<div class="empty-state"><h3>No nodes to visualize yet</h3>'
                         '<p>Create a few topics first, then use AI Auto-Connect.</p></div>', unsafe_allow_html=True)
         else:
-            st.info("Install `streamlit-agraph` to enable the interactive knowledge graph.")
+            st.graphviz_chart(build_dot(show_categories))
 
 # ================= TAB 3: KNOWLEDGE VAULT =================
 with tab3:
@@ -769,12 +857,65 @@ with tab5:
                 with st.expander("👀 Reveal Answer"):
                     st.success(fc.get('a'))
         else:
-            if st.button("🎲 Generate 3 Questions", type="primary"):
+            if st.button("🎲 Generate 5 Questions", type="primary"):
                 with st.spinner("Generating quiz..."):
-                    ok, res = ask_gemini(
-                        f"Create 3 multiple-choice questions on '{coach_topic}' with answers at the end.",
-                        selected_model=model_choice)
-                    st.markdown(res) if ok else st.error(res)
+                    q_obj = next((t for t in st.session_state.topics if t['title'] == coach_topic), {})
+                    quiz_prompt = f"""Create 5 multiple-choice questions on '{coach_topic}'.
+Base them on these notes and summary when present.
+Notes: {(q_obj.get('notes') or '')[:2000]}
+Summary: {(q_obj.get('ai_summary') or '')[:2000]}
+Return ONLY a JSON array like:
+[{{"q": "Question?", "options": ["A", "B", "C", "D"], "answer": 0, "why": "short explanation"}}]
+where "answer" is the 0-based index of the correct option."""
+                    ok, res = ask_gemini(quiz_prompt, selected_model=model_choice, json_mode=True)
+                    if ok:
+                        try:
+                            items = parse_json_loose(res)
+                            for i in range(20):
+                                st.session_state.pop(f"quiz_{i}", None)
+                            st.session_state.quiz = {"topic": coach_topic, "items": items, "result": None}
+                        except Exception:
+                            st.write(res)
+                    else:
+                        st.error(res)
+
+            qz = st.session_state.get("quiz")
+            if qz and qz["topic"] == coach_topic:
+                for i, it in enumerate(qz["items"]):
+                    st.markdown(f"**Q{i+1}. {it.get('q')}**")
+                    st.radio("Answer:", it.get("options", []), index=None, key=f"quiz_{i}",
+                             label_visibility="collapsed")
+                if st.button("✅ Submit answers"):
+                    score, review = 0, []
+                    for i, it in enumerate(qz["items"]):
+                        opts = it.get("options", [])
+                        try:
+                            correct = opts[int(it.get("answer", 0))]
+                        except Exception:
+                            correct = None
+                        chosen = st.session_state.get(f"quiz_{i}")
+                        is_right = chosen is not None and chosen == correct
+                        score += int(is_right)
+                        review.append((i + 1, is_right, correct, it.get("why", "")))
+                    pct = int(score / max(len(qz["items"]), 1) * 100)
+                    t_cur = next((t for t in st.session_state.topics if t['title'] == coach_topic), None)
+                    old_m, new_m = None, None
+                    if t_cur:
+                        old_m = int(t_cur.get('mastery') or 50)
+                        new_m = max(0, min(100, int(round((old_m + pct) / 2 / 5) * 5)))
+                        upsert_topic(coach_topic, t_cur.get('category'), t_cur.get('status'), new_m)
+                    qz["result"] = {"score": score, "total": len(qz["items"]), "review": review,
+                                    "old": old_m, "new": new_m}
+                res_q = qz.get("result")
+                if res_q:
+                    st.metric("Score", f"{res_q['score']}/{res_q['total']}")
+                    if res_q["new"] is not None:
+                        st.info(f"Mastery updated: {res_q['old']}% -> {res_q['new']}%")
+                    for num, ok_q, correct, why in res_q["review"]:
+                        if ok_q:
+                            st.success(f"Q{num}: correct. {why}")
+                        else:
+                            st.error(f"Q{num}: the correct answer is: {correct}. {why}")
 
     with c_right:
         st.subheader("📖 Smart Glossary")
@@ -788,11 +929,59 @@ with tab5:
                     st.toast("Term saved ✅")
                 st.rerun()
         if st.session_state.glossary:
+            gl_q = st.text_input("🔍 Search glossary:", key="gl_search")
             gdf = pd.DataFrame(st.session_state.glossary)
             show = [c for c in ['term', 'category', 'context'] if c in gdf.columns]
+            if gl_q:
+                mask = gdf['term'].astype(str).str.contains(gl_q, case=False, na=False, regex=False) | \
+                       gdf['context'].astype(str).str.contains(gl_q, case=False, na=False, regex=False)
+                gdf = gdf[mask]
             st.dataframe(gdf[show], hide_index=True)
+            with st.expander("🗑️ Delete a term"):
+                del_term = st.selectbox("Term:", [g['term'] for g in st.session_state.glossary], key="gl_del")
+                if st.button("Delete term"):
+                    delete_glossary(del_term)
+                    st.rerun()
 
-# ================= TAB 6: CLOUD DIAGNOSTICS =================
+# ================= TAB 6: ASK YOUR BRAIN =================
+with tab_ask:
+    st.subheader("💬 Ask Your Brain")
+    st.caption("Answers are based only on your own topics, notes and summaries.")
+    if "chat" not in st.session_state:
+        st.session_state.chat = []
+    if not st.session_state.topics:
+        st.info("Add some topics and notes first.")
+    else:
+        if st.session_state.chat and st.button("🧹 Clear chat"):
+            st.session_state.chat = []
+            st.rerun()
+        for role, msg in st.session_state.chat:
+            with st.chat_message(role):
+                st.markdown(msg)
+        user_q = st.chat_input("Ask something about your knowledge base...")
+        if user_q:
+            ctx = "\n\n".join(
+                f"## {t['title']} ({t.get('category') or ''}, {t.get('status') or ''}, mastery {t.get('mastery') or 0}%)\n"
+                f"Notes: {(t.get('notes') or '')[:800]}\nSummary: {(t.get('ai_summary') or '')[:800]}"
+                for t in st.session_state.topics)[:20000]
+            hist = "\n".join(f"{r}: {m}" for r, m in st.session_state.chat[-6:])
+            ask_prompt = f"""You are the user's second brain. Answer ONLY from the knowledge base below.
+If the answer is not in it, say so and suggest what to add.
+
+KNOWLEDGE BASE:
+{ctx}
+
+CHAT SO FAR:
+{hist}
+
+QUESTION: {user_q}"""
+            with st.spinner("Thinking..."):
+                ok, ans = ask_gemini(ask_prompt, selected_model=model_choice)
+            st.session_state.chat.append(("user", user_q))
+            st.session_state.chat.append(("assistant", ans))
+            st.rerun()
+
+# ================= TAB 7: CLOUD DIAGNOSTICS =================
 with tab6:
     st.subheader("⚙️ Cloud Database Diagnostics & Backup")
     st.write(f"**Supabase API URL:** `{SUPABASE_URL or 'Not Set'}`")
