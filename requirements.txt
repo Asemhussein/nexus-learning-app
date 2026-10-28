@@ -5,3 +5,4 @@ python-pptx
 PyPDF2
 supabase
 Pillow
+streamlit-agraph
