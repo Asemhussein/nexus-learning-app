@@ -3,3 +3,5 @@ pandas
 google-genai
 python-pptx
 PyPDF2
+supabase
+Pillow
