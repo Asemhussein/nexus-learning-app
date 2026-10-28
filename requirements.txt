@@ -1,1 +1,5 @@
 streamlit
+pandas
+google-genai
+python-pptx
+PyPDF2
