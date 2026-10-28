@@ -29,41 +29,131 @@ st.set_page_config(page_title="Nexus | AI Second Brain", page_icon="🧠", layou
 
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    :root {
+        --nx-bg: #0b1020;
+        --nx-panel: rgba(18, 27, 48, .78);
+        --nx-border: rgba(148, 163, 184, .18);
+        --nx-text: #e8eefb;
+        --nx-muted: #9ba9c4;
+        --nx-accent: #7c9cff;
+        --nx-cyan: #4de2d0;
+    }
+
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    .stApp {
+        background:
+            radial-gradient(ellipse at 12% 0%, rgba(69, 96, 210, .18), transparent 34%),
+            radial-gradient(ellipse at 92% 8%, rgba(27, 196, 191, .10), transparent 28%),
+            #0b1020;
+        color: var(--nx-text);
+    }
+    [data-testid="stHeader"] { background: rgba(11, 16, 32, .75); }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #10182c 0%, #0b1020 100%);
+        border-right: 1px solid var(--nx-border);
+    }
+    [data-testid="stSidebar"] > div { padding-top: 1.25rem; }
+    .block-container { padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1600px; }
+
     .main-header {
-        background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 60%, #0284c7 100%);
-        padding: 1.4rem 2rem;
-        border-radius: 14px;
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(118deg, #18284e 0%, #263c78 48%, #087e91 100%);
+        padding: 2rem 2.1rem;
+        border: 1px solid rgba(255,255,255,.13);
+        border-radius: 24px;
         color: white;
-        margin-bottom: 1.2rem;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+        margin-bottom: 1.35rem;
+        box-shadow: 0 18px 55px rgba(0,0,0,.22);
     }
-    .main-header h1 { color: #ffffff; margin: 0; font-size: 1.9rem; font-weight: 800; }
-    .main-header p { color: #e2e8f0; margin: 0.3rem 0 0 0; font-size: 0.95rem; }
-    
+    .main-header:after {
+        content: "";
+        position: absolute;
+        width: 270px; height: 270px;
+        right: -75px; top: -145px;
+        border: 1px solid rgba(255,255,255,.16);
+        border-radius: 50%;
+        box-shadow: 0 0 0 30px rgba(255,255,255,.035), 0 0 0 65px rgba(255,255,255,.025);
+        pointer-events: none;
+    }
+    .eyebrow {
+        text-transform: uppercase; letter-spacing: .18em; font-size: .72rem;
+        color: #b9f5ee; font-weight: 800; margin-bottom: .55rem;
+    }
+    .main-header h1 { color: #fff; margin: 0; font-size: clamp(1.7rem, 3vw, 2.55rem); font-weight: 800; letter-spacing: -.045em; }
+    .main-header p { color: #dce8ff; margin: .65rem 0 0; font-size: .98rem; max-width: 760px; line-height: 1.65; }
+    .section-kicker {
+        color: #90a8ff; text-transform: uppercase; letter-spacing: .14em;
+        font-size: .7rem; font-weight: 800; margin-bottom: .35rem;
+    }
     .status-badge {
-        padding: 8px 12px;
-        border-radius: 8px;
-        font-size: 0.82rem;
-        font-weight: 600;
-        text-align: center;
-        margin-bottom: 8px;
+        padding: 9px 11px; border-radius: 12px; font-size: .76rem;
+        font-weight: 700; text-align: center; margin-bottom: 8px;
+        border: 1px solid var(--nx-border); background: rgba(255,255,255,.04);
     }
-    .badge-ok { background-color: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
-    .badge-warn { background-color: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
-    
+    .badge-ok { color: #5eead4; border-color: rgba(45,212,191,.24); background: rgba(45,212,191,.08); }
+    .badge-warn { color: #fbbf24; border-color: rgba(251,191,36,.24); background: rgba(251,191,36,.08); }
+
     div[data-testid="stMetric"] {
-        background-color: rgba(30, 41, 59, 0.04);
-        border: 1px solid rgba(148, 163, 184, 0.25);
-        padding: 0.8rem 1rem;
-        border-radius: 12px;
+        background: linear-gradient(145deg, rgba(23,34,59,.95), rgba(16,24,43,.78));
+        border: 1px solid var(--nx-border); padding: 1rem 1.1rem;
+        border-radius: 18px; box-shadow: 0 8px 28px rgba(0,0,0,.10);
+    }
+    div[data-testid="stMetricLabel"] { color: #aab8d4; font-weight: 600; }
+    div[data-testid="stMetricValue"] { color: #f4f7ff; font-weight: 800; }
+    div[data-testid="stMetricDelta"] { font-size: .8rem; }
+    [data-testid="stVerticalBlockBorderWrapper"] > div {
+        border-color: var(--nx-border) !important; border-radius: 18px !important;
+        background: rgba(18,27,48,.42);
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 7px; border-bottom: 1px solid var(--nx-border);
+        background: rgba(255,255,255,.025); padding: 7px; border-radius: 16px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 43px; border-radius: 11px; padding: 0 15px;
+        color: #aab8d4; font-weight: 650; border: 1px solid transparent;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(120deg, rgba(124,156,255,.22), rgba(77,226,208,.10));
+        color: #f5f8ff !important; border-color: rgba(124,156,255,.22);
+    }
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 12px; min-height: 2.65rem; font-weight: 700;
+        transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+        border: 1px solid var(--nx-border);
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0,0,0,.18);
+        border-color: rgba(124,156,255,.55);
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(115deg, #647ff5, #0eaaa8);
+        color: white; border: 0;
+    }
+    input, textarea, [data-baseweb="select"] > div {
+        border-radius: 11px !important;
     }
     .flashcard {
-        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-        color: #f8fafc;
-        padding: 1.2rem;
-        border-radius: 12px;
-        border-left: 5px solid #38bdf8;
-        margin-bottom: 0.8rem;
+        background: linear-gradient(135deg, #1a2c51 0%, #111b31 100%);
+        color: #f8fafc; padding: 1.2rem; border-radius: 16px;
+        border: 1px solid rgba(124,156,255,.22);
+        border-left: 4px solid #4de2d0; margin-bottom: .8rem;
+        box-shadow: 0 8px 25px rgba(0,0,0,.12);
+    }
+    .empty-state {
+        padding: 2rem; text-align: center; border-radius: 18px;
+        border: 1px dashed rgba(148,163,184,.3); background: rgba(255,255,255,.025);
+        color: #aab8d4;
+    }
+    .small-muted { color: #9ba9c4; font-size: .82rem; }
+    hr { border-color: var(--nx-border) !important; }
+    @media (max-width: 800px) {
+        .block-container { padding: 1rem .8rem 2rem; }
+        .main-header { padding: 1.4rem; border-radius: 18px; }
+        .stTabs [data-baseweb="tab"] { padding: 0 9px; font-size: .78rem; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -93,7 +183,7 @@ def sanitize_supabase_url(raw_url):
     if match_api:
         return match_api.group(1)
     # If user pasted just the project ID: abcdefghijk
-    if re.match(r'^[a-z0-9]{15,25}\$', raw_url):
+    if re.match(r'^[a-z0-9]{15,25}$', raw_url):
         return f"https://{raw_url}.supabase.co"
     return raw_url.rstrip('/')
 
@@ -325,8 +415,9 @@ with st.sidebar:
 # ================= MAIN HEADER =================
 st.markdown("""
 <div class="main-header">
-    <h1>🧠 Nexus | Personal AI Second Brain & Knowledge Graph</h1>
-    <p>Cloud-synced learning tracker, visual concept mapper, fast document analyzer, and executive pitch studio.</p>
+    <div class="eyebrow">PERSONAL KNOWLEDGE SYSTEM · AI-POWERED WORKSPACE</div>
+    <h1>🧠 Nexus <span style="font-weight:500; opacity:.82;">/ Your Second Brain</span></h1>
+    <p>Capture what you learn, connect ideas, measure mastery, and turn knowledge into clear presentations — all in one focused workspace.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -351,6 +442,9 @@ with tab1:
         m3.metric("⚡ In Progress", len(df[df['status'] == 'In Progress']))
         m4.metric("🎯 Avg Mastery", f"{df['mastery'].mean():.0f}%")
         
+        completion_rate = (len(df[df['status'] == 'Completed']) / len(df) * 100) if len(df) else 0
+        st.caption(f"Your knowledge workspace · {completion_rate:.0f}% of topics marked complete")
+
         st.divider()
         ch1, ch2 = st.columns(2)
         with ch1:
@@ -389,8 +483,16 @@ with tab1:
             use_container_width=True,
             hide_index=True
         )
+        csv_data = filtered_df[cols_to_show].to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇️ Export filtered topics (CSV)",
+            data=csv_data,
+            file_name="nexus_topics.csv",
+            mime="text/csv",
+            use_container_width=False
+        )
     else:
-        st.info("No topics logged yet. Use the sidebar to add your first topic!")
+        st.markdown('<div class="empty-state"><h3>Your knowledge base starts here</h3><p>Add a topic from the sidebar to start tracking progress, connecting ideas, and building your second brain.</p></div>', unsafe_allow_html=True)
 
 # ================= TAB 2: VISUAL KNOWLEDGE MAP =================
 with tab2:
@@ -451,7 +553,11 @@ with tab2:
                     if target_match:
                         edges.append(Edge(source=t['title'], target=target_match, color="#38bdf8", width=2))
                         
-            agraph(nodes=nodes, edges=edges, config=Config(width="100%", height=500, directed=False, physics=physics_enabled))
+            agraph(nodes=nodes, edges=edges, config=Config(width="100%", height=540, directed=False, physics=physics_enabled))
+        elif not st.session_state.topics:
+            st.markdown('<div class="empty-state"><h3>No nodes to visualize yet</h3><p>Create a few topics first, then use AI Auto-Connect to discover relationships.</p></div>', unsafe_allow_html=True)
+        else:
+            st.info("Install `streamlit-agraph` to enable the interactive knowledge graph.")
 
 # ================= TAB 3: KNOWLEDGE VAULT =================
 with tab3:
@@ -513,7 +619,8 @@ with tab3:
         if saved_sum and not saved_sum.startswith("AI Error:"):
             st.divider()
             st.markdown("#### 🤖 Saved AI Synthesis")
-            st.info(saved_sum)
+            with st.container(border=True):
+                st.markdown(saved_sum)
 
 # ================= TAB 4: PITCH STUDIO =================
 with tab4:
