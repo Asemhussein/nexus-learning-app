@@ -6,3 +6,6 @@ PyPDF2
 supabase
 Pillow
 streamlit-agraph
+requests
+beautifulsoup4
+youtube-transcript-api
